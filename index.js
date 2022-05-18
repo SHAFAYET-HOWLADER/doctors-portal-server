@@ -1,5 +1,6 @@
 const express = require('express');
 const { MongoClient, ServerApiVersion } = require('mongodb');
+const jwt = require('jsonwebtoken');
 const app = express();
 const port = process.env.PORT || 5000;
 const cors = require('cors');
@@ -12,12 +13,55 @@ app.get('/', (req, res) => {
 })
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.rqvup.mongodb.net/myFirstDatabase?retryWrites=true&w=majority`;
 const client = new MongoClient(uri, { useNewUrlParser: true, useUnifiedTopology: true, serverApi: ServerApiVersion.v1 });
+function verifyJwt(req, res, next) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+        return res.status(401).send({ message: 'Unauthorized' });
+    }
+    const token = authHeader.split(' ')[1]
+    jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, function (err, decoded) {
+        if (err) {
+            return res.status(403).send({ message: 'forbidden' })
+        }
+        res.decoded = decoded;
+        next();
+    });
+}
 async function run() {
     try {
         await client.connect()
         const dentalCollection = client.db("dentalServer").collection("service");
         const bookingCollection = client.db("dentalServer").collection("booking");
         const userCollection = client.db("dentalServer").collection("user");
+        app.get('/user', verifyJwt, async (req, res) => {
+            const users = await userCollection.find().toArray();
+            res.send(users);
+        })
+        app.get('/admin/:email', async (req,res)=>{
+            const email = req.params.email;
+            const user = await userCollection.findOne({email:email});
+            const isAdmin = user?.role === "Admin";
+            res.send({admin: isAdmin});
+        })
+        //--------------get all data from db---------------//
+        app.put('/user/admin/:email', verifyJwt, async (req, res) => {
+            const email = req.params.email;
+            const requester = req.decoded?.email;
+            const requesterAccount = await userCollection.findOne({ email: requester });
+            if (requesterAccount?.role === 'Admin') {
+                const filter = { email: email };
+                const updateDoc = {
+                    $set: { role: 'Admin' },
+                }
+                const result = await userCollection.updateOne(filter, updateDoc);
+                res.send(result);
+            }
+            else{
+                res.status(403).send({message: 'forbidden'})
+            }
+
+        })
+
         app.put('/user/:email', async (req, res) => {
             const email = req.params.email;
             const user = req.body;
@@ -25,22 +69,28 @@ async function run() {
             const options = { upsert: true };
             const updateDoc = {
                 $set: user,
-            };
+            }
             const result = await userCollection.updateOne(filter, updateDoc, options);
-            res.send(result);
+            const accessToken = jwt.sign({ email: email }, process.env.ACCESS_TOKEN_SECRET, {
+                expiresIn: '1d'
+            })
+            res.send({ result, accessToken });
         })
-        //--------------get all data from db---------------//
+        //--------------put user data in db---------------//
         app.get('/service', async (req, res) => {
             const query = {};
             const cursor = dentalCollection.find(query);
             const result = await cursor.toArray();
             res.send(result);
         })
-        app.get('/booking', async (req, res) => {
+        app.get('/booking', verifyJwt, async (req, res) => {
             const patient = req.query.email;
-            const query = { patient: patient }
-            const result = await bookingCollection.find(query).toArray();
-            res.send(result);
+            const decodedEmail = req.decoded?.email;
+            if (patient === decodedEmail) {
+                const query = { patient: patient }
+                const result = await bookingCollection.find(query).toArray();
+                return res.send(result);
+            }
         })
         app.get('/available', async (req, res) => {
             const date = req.query.date || 'May 15, 2022';
@@ -70,10 +120,8 @@ async function run() {
             if (exists) {
                 return res.send({ success: false, booking: exists });
             }
-
             const result = await bookingCollection.insertOne(booking);
             return res.send({ success: true, result });
-
         })
     }
     finally {
