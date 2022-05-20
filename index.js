@@ -37,31 +37,27 @@ async function run() {
             const users = await userCollection.find().toArray();
             res.send(users);
         })
-        app.get('/admin/:email', async (req,res)=>{
-            const email = req.params.email;
-            const user = await userCollection.findOne({email:email});
-            const isAdmin = user?.role === "Admin";
-            res.send({admin: isAdmin});
-        })
         //--------------get all data from db---------------//
         app.put('/user/admin/:email', verifyJwt, async (req, res) => {
             const email = req.params.email;
-            const requester = req.decoded?.email;
+            const requester = req.decoded.email;
+            console.log(requester)
             const requesterAccount = await userCollection.findOne({ email: requester });
-            if (requesterAccount?.role === 'Admin') {
+            if (requesterAccount.role === 'admin') {
                 const filter = { email: email };
                 const updateDoc = {
-                    $set: { role: 'Admin' },
+                    $set: {
+                        role: 'admin'
+                    },
                 }
                 const result = await userCollection.updateOne(filter, updateDoc);
                 res.send(result);
             }
             else{
-                res.status(403).send({message: 'forbidden'})
+                return res.status(403).send({message: 'unAuthorized'})
             }
 
         })
-
         app.put('/user/:email', async (req, res) => {
             const email = req.params.email;
             const user = req.body;
